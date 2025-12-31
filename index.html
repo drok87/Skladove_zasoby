@@ -8522,6 +8522,19 @@ function openServiceForMachine(machineId){
 </script>
 
 <script>
+(function(){
+  // --- PATCH FIX: this block was missing IIFE start + helper defs (caused SyntaxError at closing `})();`) ---
+  const LS_PREFIX = 'deviceDetail:';
+  const todayStr = (typeof window.todayStr === 'function') ? window.todayStr : (()=> new Date().toISOString().slice(0,10));
+  const getDeviceKey = (typeof window.getDeviceKey === 'function') ? window.getDeviceKey : (modal=>{
+    const idEl = (modal||document).querySelector('[data-machine-id],[data-device-id]');
+    if (idEl && (idEl.dataset.machineId || idEl.dataset.deviceId)) return (idEl.dataset.machineId || idEl.dataset.deviceId);
+    const t = (modal||document).querySelector('.modal-title')?.textContent?.trim();
+    return t || 'global';
+  });
+  const lsGet = (typeof window.lsGet === 'function') ? window.lsGet : ((key, def)=>{ try{ const v=localStorage.getItem(key); return v?JSON.parse(v):def; }catch(e){ return def; } });
+  const lsSet = (typeof window.lsSet === 'function') ? window.lsSet : ((key, val)=>{ try{ localStorage.setItem(key, JSON.stringify(val)); }catch(e){ console.warn('LocalStorage full?', e); } });
+
 async function filesToDataURLs(files, maxW=1280, quality=0.75){
     const results = [];
     for (const file of files){
@@ -9147,7 +9160,6 @@ function startEditService(modal, id){
 
 <!-- CHATGPT PATCH 5: Roles, filters, PDF export, history delete + audit -->
 <script>
-(function(){
   const LS_PREFIX = 'deviceDetail:';
   const APP_ROLE_KEY = 'app:userRole'; // 'viewer' | 'editor' | 'admin'
   const $ = (sel, root=document) => root.querySelector(sel);
@@ -9303,7 +9315,7 @@ function exportServicePDF(modal){
   w.document.write(html);
   w.document.close();
   try { w.focus(); } catch{}
-})();
+}
 
 </script>
 
