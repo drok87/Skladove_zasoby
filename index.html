@@ -101,9 +101,35 @@
                 return;
             }
             
+            // Validace - neuložíme prázdná nebo poškozená data
+            if (!data || !data.main || !data.main.sparePartsState_v13) {
+                console.warn('Pokus o uložení prázdných dat - přeskakuji');
+                if (callback) callback(false);
+                return;
+            }
+            
+            var state = data.main.sparePartsState_v13;
+            if (!state.users || state.users.length === 0) {
+                console.warn('Data neobsahují uživatele - přeskakuji uložení');
+                if (callback) callback(false);
+                return;
+            }
+            
             this.syncInProgress = true;
             this.showSyncStatus('Ukládám do cloudu...', 'syncing');
             this.setSyncButtonState('syncing');
+            
+            // Uložíme zálohu do localStorage
+            try {
+                var backupKey = 'sparePartsState_v13_backup';
+                var currentData = localStorage.getItem('sparePartsState_v13');
+                if (currentData) {
+                    window._originalSetItem(backupKey, currentData);
+                    window._originalSetItem(backupKey + '_time', new Date().toISOString());
+                }
+            } catch(e) {
+                console.warn('Nepodařilo se uložit zálohu:', e);
+            }
             
             // Vytvoříme skrytý iframe
             var iframeName = 'cloudSyncFrame_' + Date.now();
@@ -303,11 +329,15 @@
     
     // Dialog pro obnovu
     CloudSync.showRecoveryDialog = function() {
+        var backupTime = localStorage.getItem('sparePartsState_v13_backup_time');
+        var backupInfo = backupTime ? '\\n3 = Obnovit lokální zálohu (' + new Date(backupTime).toLocaleString('cs-CZ') + ')' : '';
+        
         var choice = prompt(
             'Vyberte akci:\\n\\n' +
             '1 = Znovu načíst data z cloudu (bezpečné)\\n' +
-            '2 = Resetovat do výchozího stavu (smaže lokální data)\\n\\n' +
-            'Zadejte 1 nebo 2:'
+            '2 = Resetovat do výchozího stavu (smaže lokální data)' +
+            backupInfo + '\\n\\n' +
+            'Zadejte číslo:'
         );
         
         if (choice === '1') {
@@ -316,6 +346,29 @@
             if (confirm('Opravdu chcete resetovat aplikaci?\\nToto smaže všechna lokální data!')) {
                 CloudSync.resetToDefault();
             }
+        } else if (choice === '3' && backupTime) {
+            CloudSync.restoreBackup();
+        }
+    };
+    
+    // Obnovení ze zálohy
+    CloudSync.restoreBackup = function() {
+        var backup = localStorage.getItem('sparePartsState_v13_backup');
+        if (backup) {
+            try {
+                var parsed = JSON.parse(backup);
+                if (parsed.users && parsed.users.length > 0) {
+                    localStorage.setItem('sparePartsState_v13', backup);
+                    alert('Záloha byla obnovena.\\nStránka se nyní obnoví.');
+                    location.reload();
+                } else {
+                    alert('Záloha neobsahuje platná data.');
+                }
+            } catch(e) {
+                alert('Chyba při obnově zálohy: ' + e.message);
+            }
+        } else {
+            alert('Žádná záloha není k dispozici.');
         }
     };
     
