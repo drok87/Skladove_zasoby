@@ -20,6 +20,7 @@
         syncInProgress: false,
         pendingChanges: [],
         autoSyncInterval: 30000,
+        dirty: false,
         
         init: function() {
             if (GOOGLE_SCRIPT_URL === 'VLOZTE_SVOU_URL_ZDE') {
@@ -78,6 +79,7 @@
             .then(function(result) {
                 if (result.success) {
                     self.lastSync = new Date();
+                    self.dirty = false;
                     self.showSyncStatus('Data načtena z cloudu', 'success');
                     self.setSyncButtonState('synced');
                     if (callback) callback(result.data);
@@ -172,6 +174,7 @@
                 self.syncInProgress = false;
                 self.lastSync = new Date();
                 self.pendingChanges = [];
+                self.dirty = false;
                 self.showSyncStatus('Uloženo do cloudu', 'success');
                 self.setSyncButtonState('synced');
                 cleanup();
@@ -192,6 +195,7 @@
                     self.syncInProgress = false;
                     self.lastSync = new Date();
                     self.pendingChanges = [];
+                self.dirty = false;
                     self.showSyncStatus('Uloženo do cloudu', 'success');
                     self.setSyncButtonState('synced');
                     cleanup();
@@ -249,8 +253,11 @@
             if (this.pendingChanges.indexOf(key) === -1) {
                 this.pendingChanges.push(key);
             }
+            // indikace neuložených změn
+            this.dirty = true;
+            this.setSyncButtonState('dirty');
         }
-    };
+        };
     
     // Override localStorage - automatické ukládání
     (function() {
@@ -490,6 +497,9 @@
         if (state === 'syncing') {
             btn.style.backgroundColor = '#ff9500'; // Oranžová
             btn.style.borderColor = '#ff9500';
+        } else if (state === 'dirty') {
+            btn.style.backgroundColor = '#ffcc00'; // Žlutá = neuložené změny
+            btn.style.borderColor = '#ffcc00';
         } else if (state === 'synced') {
             btn.style.backgroundColor = '#34c759'; // Zelená
             btn.style.borderColor = '#34c759';
