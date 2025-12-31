@@ -257,25 +257,157 @@
         
         if (cloudEnabled) {
             CloudSync.loadFromCloud(function(cloudData) {
-                if (cloudData && cloudData.main) {
-                    var keys = Object.keys(cloudData.main);
+                if (cloudData && cloudData.main && cloudData.main.sparePartsState_v13) {
+                    // Kontrola že data obsahují uživatele
+                    var state = cloudData.main.sparePartsState_v13;
+                    if (state.users && state.users.length > 0) {
+                        var keys = Object.keys(cloudData.main);
+                        for (var i = 0; i < keys.length; i++) {
+                            var key = keys[i];
+                            var cloudValue = cloudData.main[key];
+                            if (cloudValue !== null && cloudValue !== undefined) {
+                                var valueStr = typeof cloudValue === 'object' ? JSON.stringify(cloudValue) : String(cloudValue);
+                                window._originalSetItem(key, valueStr);
+                            }
+                        }
+                        
+                        if (typeof loadStateFromLocalStorage === 'function') {
+                            loadStateFromLocalStorage();
+                            if (typeof renderAll === 'function') renderAll();
+                        }
+                    } else {
+                        console.warn('Cloud data neobsahují uživatele, používám lokální data');
+                    }
+                }
+            });
+        }
+        
+        // Přidáme nouzový reset - trojklik na logo/nadpis
+        setTimeout(function() {
+            var header = document.querySelector('.header h1');
+            if (header) {
+                var clickCount = 0;
+                var clickTimer = null;
+                header.addEventListener('click', function() {
+                    clickCount++;
+                    if (clickCount === 3) {
+                        clickCount = 0;
+                        CloudSync.showRecoveryDialog();
+                    }
+                    clearTimeout(clickTimer);
+                    clickTimer = setTimeout(function() { clickCount = 0; }, 500);
+                });
+            }
+        }, 1000);
+    });
+    
+    // Dialog pro obnovu
+    CloudSync.showRecoveryDialog = function() {
+        var choice = prompt(
+            'Vyberte akci:\\n\\n' +
+            '1 = Znovu načíst data z cloudu (bezpečné)\\n' +
+            '2 = Resetovat do výchozího stavu (smaže lokální data)\\n\\n' +
+            'Zadejte 1 nebo 2:'
+        );
+        
+        if (choice === '1') {
+            CloudSync.reloadFromCloud();
+        } else if (choice === '2') {
+            if (confirm('Opravdu chcete resetovat aplikaci?\\nToto smaže všechna lokální data!')) {
+                CloudSync.resetToDefault();
+            }
+        }
+    };
+    
+    // Funkce pro znovu načtení z cloudu
+    CloudSync.reloadFromCloud = function() {
+        var self = this;
+        this.showSyncStatus('Načítám data z cloudu...', 'syncing');
+        this.setSyncButtonState('syncing');
+        
+        fetch(GOOGLE_SCRIPT_URL + '?action=getData', {
+            method: 'GET',
+            redirect: 'follow'
+        })
+        .then(function(response) { return response.json(); })
+        .then(function(result) {
+            if (result.success && result.data && result.data.main && result.data.main.sparePartsState_v13) {
+                var state = result.data.main.sparePartsState_v13;
+                if (state.users && state.users.length > 0) {
+                    var keys = Object.keys(result.data.main);
                     for (var i = 0; i < keys.length; i++) {
                         var key = keys[i];
-                        var cloudValue = cloudData.main[key];
+                        var cloudValue = result.data.main[key];
                         if (cloudValue !== null && cloudValue !== undefined) {
                             var valueStr = typeof cloudValue === 'object' ? JSON.stringify(cloudValue) : String(cloudValue);
                             window._originalSetItem(key, valueStr);
                         }
                     }
-                    
-                    if (typeof loadStateFromLocalStorage === 'function') {
-                        loadStateFromLocalStorage();
-                        if (typeof renderAll === 'function') renderAll();
-                    }
+                    self.showSyncStatus('Data obnovena z cloudu', 'success');
+                    self.setSyncButtonState('synced');
+                    alert('Data byla úspěšně načtena z cloudu.\\nStránka se nyní obnoví.');
+                    location.reload();
+                } else {
+                    throw new Error('Cloud neobsahuje platná data');
                 }
-            });
-        }
-    });
+            } else {
+                throw new Error('Žádná data v cloudu');
+            }
+        })
+        .catch(function(error) {
+            console.error('Reload error:', error);
+            self.showSyncStatus('Chyba při načítání', 'error');
+            self.setSyncButtonState('error');
+            alert('Nepodařilo se načíst data z cloudu.\\n\\nChyba: ' + error.message);
+        });
+    };
+    
+    // Funkce pro reset do výchozího stavu
+    CloudSync.resetToDefault = function() {
+        // Vymazat localStorage
+        localStorage.clear();
+        
+        // Vytvořit výchozí data s admin uživatelem
+        var defaultState = {
+            users: [{
+                id: 1,
+                name: 'David Rok',
+                email: 'david.rok@firma.cz',
+                password: 'admin',
+                role: 'admin',
+                permissions: {
+                    canAddMasterPart: true, canEditParts: true, canDeleteParts: true,
+                    canCreateOrders: true, canCreateTransfers: true, canManageUsers: true,
+                    canViewReports: true, canManageSettings: true, canManageSuppliers: true,
+                    canPerformInventory: true
+                },
+                warehouses: null,
+                dashboard: { pinnedParts: [], pinnedCharts: [], dashboardScope: 'all' },
+                forcePasswordChange: true
+            }],
+            parts: [],
+            orders: [],
+            transfers: [],
+            transactions: [],
+            notifications: [],
+            suppliers: [],
+            inventorySessions: [],
+            auditLog: [],
+            warehouses: { 'lib': 'Liboc', 'bro': 'Brno', 'poc': 'Počernice' },
+            categories: { 'elektro': 'Elektro', 'mechanicke': 'Mechanické', 'spotrebni': 'Spotřební' },
+            machines: {},
+            priorities: { 'a': 'A - Kritický díl', 'b': 'B - Vysoká', 'c': 'C - Střední', 'd': 'D - Nízká' },
+            dispenseReasons: { 'oprava': 'Oprava zařízení', 'udrzba': 'Plánovaná údržba', 'jine': 'Jiné' },
+            settings: { lowStockThreshold: 20 }
+        };
+        
+        localStorage.setItem('sparePartsState_v13', JSON.stringify(defaultState));
+        
+        alert('Aplikace byla resetována.\\n\\nPřihlašovací údaje:\\nEmail: david.rok@firma.cz\\nHeslo: admin');
+        
+        // Reload stránky
+        location.reload();
+    };
     
     // Tlačítko pro sync s barevnou indikací
     window.addEventListener('load', function() {
