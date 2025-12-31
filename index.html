@@ -19,7 +19,7 @@
         lastSync: null,
         syncInProgress: false,
         pendingChanges: [],
-        autoSyncInterval: 60000,
+        autoSyncInterval: 30000,
         
         init: function() {
             if (GOOGLE_SCRIPT_URL === 'VLOZTE_SVOU_URL_ZDE') {
@@ -79,6 +79,7 @@
                 if (result.success) {
                     self.lastSync = new Date();
                     self.showSyncStatus('Data načtena z cloudu', 'success');
+                    self.setSyncButtonState('synced');
                     if (callback) callback(result.data);
                 } else {
                     throw new Error(result.error || 'Chyba');
@@ -87,6 +88,7 @@
             .catch(function(error) {
                 console.error('Cloud load error:', error);
                 self.showSyncStatus('Chyba při načítání', 'error');
+                self.setSyncButtonState('error');
                 if (callback) callback(null);
             });
         },
@@ -101,6 +103,7 @@
             
             this.syncInProgress = true;
             this.showSyncStatus('Ukládám do cloudu...', 'syncing');
+            this.setSyncButtonState('syncing');
             
             // Vytvoříme skrytý iframe
             var iframeName = 'cloudSyncFrame_' + Date.now();
@@ -144,6 +147,7 @@
                 self.lastSync = new Date();
                 self.pendingChanges = [];
                 self.showSyncStatus('Uloženo do cloudu', 'success');
+                self.setSyncButtonState('synced');
                 cleanup();
                 if (callback) callback(true);
             };
@@ -151,6 +155,7 @@
             iframe.onerror = function() {
                 self.syncInProgress = false;
                 self.showSyncStatus('Chyba při ukládání', 'error');
+                self.setSyncButtonState('error');
                 cleanup();
                 if (callback) callback(false);
             };
@@ -162,6 +167,7 @@
                     self.lastSync = new Date();
                     self.pendingChanges = [];
                     self.showSyncStatus('Uloženo do cloudu', 'success');
+                    self.setSyncButtonState('synced');
                     cleanup();
                     if (callback) callback(true);
                 }
@@ -220,23 +226,24 @@
         }
     };
     
-    // Override localStorage - ale ne pro funkce
+    // Override localStorage - automatické ukládání
     (function() {
         var originalSetItem = localStorage.setItem.bind(localStorage);
         var originalGetItem = localStorage.getItem.bind(localStorage);
         
         localStorage.setItem = function(key, value) {
             originalSetItem(key, value);
-            // Synchronizujeme pouze pro důležité klíče
+            // Synchronizujeme pro všechny důležité klíče
             if (CloudSync.enabled && 
                 key.indexOf('darkMode') !== 0 && 
                 key.indexOf('lang') !== 0 &&
-                (key === 'sparePartsState_v13' || key.indexOf('deviceDetail') === 0)) {
+                typeof value === 'string' &&
+                value.indexOf('function') !== 0) {
                 CloudSync.markChange(key);
                 clearTimeout(window._cloudSaveTimeout);
                 window._cloudSaveTimeout = setTimeout(function() {
                     CloudSync.syncAll();
-                }, 3000);
+                }, 2000);
             }
         };
         
@@ -270,20 +277,42 @@
         }
     });
     
-    // Tlačítko pro sync
+    // Tlačítko pro sync s barevnou indikací
     window.addEventListener('load', function() {
         setTimeout(function() {
             var headerRight = document.querySelector('.header-right');
             if (headerRight && CloudSync.enabled) {
                 var syncBtn = document.createElement('button');
+                syncBtn.id = 'cloud-sync-btn';
                 syncBtn.className = 'theme-switcher';
                 syncBtn.title = 'Synchronizovat s cloudem';
                 syncBtn.innerHTML = '☁️';
+                syncBtn.style.transition = 'background-color 0.3s ease';
                 syncBtn.onclick = function() { CloudSync.syncAll(); };
                 headerRight.insertBefore(syncBtn, headerRight.firstChild);
+                
+                // Nastavíme výchozí zelenou (synced)
+                CloudSync.setSyncButtonState('synced');
             }
         }, 500);
     });
+    
+    // Funkce pro změnu barvy tlačítka
+    CloudSync.setSyncButtonState = function(state) {
+        var btn = document.getElementById('cloud-sync-btn');
+        if (!btn) return;
+        
+        if (state === 'syncing') {
+            btn.style.backgroundColor = '#ff9500'; // Oranžová
+            btn.style.borderColor = '#ff9500';
+        } else if (state === 'synced') {
+            btn.style.backgroundColor = '#34c759'; // Zelená
+            btn.style.borderColor = '#34c759';
+        } else if (state === 'error') {
+            btn.style.backgroundColor = '#ff3b30'; // Červená
+            btn.style.borderColor = '#ff3b30';
+        }
+    };
     </script>
     <style>
         /* --- Základní styly a proměnné --- */
