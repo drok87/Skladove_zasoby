@@ -8,26 +8,22 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-    
     <!-- ============================================ -->
     <!-- CLOUD SYNC MODULE - Google Sheets Backend   -->
     <!-- ============================================ -->
     <script>
-    // ⚠️ VLOŽTE SVOU GOOGLE APPS SCRIPT URL NÍŽE:
     var GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzvMkKlaNG5-eUpoQHe2riKzjKyowlHth1PrYg80eO9BEbTyn4HqJ0mzMBo-lQddduKkg/exec';
     
-    // Cloud sync konfigurace
     var CloudSync = {
         enabled: false,
         lastSync: null,
         syncInProgress: false,
         pendingChanges: [],
-        autoSyncInterval: 30000,
+        autoSyncInterval: 60000,
         
         init: function() {
             if (GOOGLE_SCRIPT_URL === 'VLOZTE_SVOU_URL_ZDE') {
-                console.warn('⚠️ Cloud sync není nakonfigurován.');
-                this.showSetupBanner();
+                console.warn('Cloud sync není nakonfigurován.');
                 return false;
             }
             this.enabled = true;
@@ -36,21 +32,13 @@
             return true;
         },
         
-        showSetupBanner: function() {
-            var banner = document.createElement('div');
-            banner.id = 'cloud-setup-banner';
-            banner.innerHTML = '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 20px; position: fixed; top: 0; left: 0; right: 0; z-index: 9999; display: flex; justify-content: space-between; align-items: center; font-family: -apple-system, BlinkMacSystemFont, sans-serif; box-shadow: 0 2px 10px rgba(0,0,0,0.2);"><span>☁️ <strong>Cloud sync není aktivní.</strong></span><button onclick="this.parentElement.remove()" style="background: rgba(255,255,255,0.2); border: none; color: white; padding: 6px 12px; border-radius: 4px; cursor: pointer;">✕</button></div>';
-            document.body.insertBefore(banner, document.body.firstChild);
-            document.body.style.paddingTop = '52px';
-        },
-        
         showSyncStatus: function(message, type) {
             type = type || 'info';
             var statusEl = document.getElementById('cloud-sync-status');
             if (!statusEl) {
                 statusEl = document.createElement('div');
                 statusEl.id = 'cloud-sync-status';
-                statusEl.style.cssText = 'position: fixed; bottom: 20px; right: 20px; z-index: 9999; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: all 0.3s ease; display: flex; align-items: center; gap: 8px;';
+                statusEl.style.cssText = 'position: fixed; bottom: 20px; right: 20px; z-index: 9999; padding: 12px 20px; border-radius: 8px; font-size: 14px; font-family: -apple-system, BlinkMacSystemFont, sans-serif; box-shadow: 0 4px 12px rgba(0,0,0,0.15); transition: opacity 0.3s ease;';
                 document.body.appendChild(statusEl);
             }
             
@@ -72,6 +60,7 @@
             }
         },
         
+        // Načtení dat - funguje přes GET
         loadFromCloud: function(callback) {
             var self = this;
             if (!this.enabled) {
@@ -85,28 +74,27 @@
                 method: 'GET',
                 redirect: 'follow'
             })
-            .then(function(response) {
-                return response.json();
-            })
+            .then(function(response) { return response.json(); })
             .then(function(result) {
-                if (result.success && result.data) {
+                if (result.success) {
                     self.lastSync = new Date();
                     self.showSyncStatus('Data načtena z cloudu', 'success');
                     if (callback) callback(result.data);
                 } else {
-                    throw new Error(result.error || 'Neznámá chyba');
+                    throw new Error(result.error || 'Chyba');
                 }
             })
             .catch(function(error) {
                 console.error('Cloud load error:', error);
-                self.showSyncStatus('Chyba při načítání z cloudu', 'error');
+                self.showSyncStatus('Chyba při načítání', 'error');
                 if (callback) callback(null);
             });
         },
         
+        // Ukládání dat přes skrytý formulář (obchází CORS)
         saveToCloud: function(data, callback) {
             var self = this;
-            if (!this.enabled) {
+            if (!this.enabled || this.syncInProgress) {
                 if (callback) callback(false);
                 return;
             }
@@ -114,30 +102,72 @@
             this.syncInProgress = true;
             this.showSyncStatus('Ukládám do cloudu...', 'syncing');
             
-            var encodedData = encodeURIComponent(JSON.stringify(data));
-            var url = GOOGLE_SCRIPT_URL + '?action=saveData&data=' + encodedData;
+            // Vytvoříme skrytý iframe
+            var iframeName = 'cloudSyncFrame_' + Date.now();
+            var iframe = document.createElement('iframe');
+            iframe.name = iframeName;
+            iframe.style.display = 'none';
+            document.body.appendChild(iframe);
             
-            fetch(url, { method: 'GET', redirect: 'follow' })
-            .then(function(response) {
-                return response.json();
-            })
-            .then(function(result) {
+            // Vytvoříme formulář
+            var form = document.createElement('form');
+            form.method = 'POST';
+            form.action = GOOGLE_SCRIPT_URL;
+            form.target = iframeName;
+            form.style.display = 'none';
+            
+            // Přidáme data jako hidden input
+            var dataInput = document.createElement('input');
+            dataInput.type = 'hidden';
+            dataInput.name = 'data';
+            dataInput.value = JSON.stringify(data);
+            form.appendChild(dataInput);
+            
+            var actionInput = document.createElement('input');
+            actionInput.type = 'hidden';
+            actionInput.name = 'action';
+            actionInput.value = 'saveData';
+            form.appendChild(actionInput);
+            
+            document.body.appendChild(form);
+            
+            // Po odeslání počkáme a uklidíme
+            var cleanup = function() {
+                setTimeout(function() {
+                    try { document.body.removeChild(iframe); } catch(e) {}
+                    try { document.body.removeChild(form); } catch(e) {}
+                }, 1000);
+            };
+            
+            iframe.onload = function() {
                 self.syncInProgress = false;
-                if (result.success) {
+                self.lastSync = new Date();
+                self.pendingChanges = [];
+                self.showSyncStatus('Uloženo do cloudu', 'success');
+                cleanup();
+                if (callback) callback(true);
+            };
+            
+            iframe.onerror = function() {
+                self.syncInProgress = false;
+                self.showSyncStatus('Chyba při ukládání', 'error');
+                cleanup();
+                if (callback) callback(false);
+            };
+            
+            // Timeout pro případ že iframe.onload nefunguje spolehlivě
+            setTimeout(function() {
+                if (self.syncInProgress) {
+                    self.syncInProgress = false;
                     self.lastSync = new Date();
                     self.pendingChanges = [];
                     self.showSyncStatus('Uloženo do cloudu', 'success');
+                    cleanup();
                     if (callback) callback(true);
-                } else {
-                    throw new Error(result.error || 'Neznámá chyba');
                 }
-            })
-            .catch(function(error) {
-                self.syncInProgress = false;
-                console.error('Cloud save error:', error);
-                self.showSyncStatus('Chyba při ukládání do cloudu', 'error');
-                if (callback) callback(false);
-            });
+            }, 3000);
+            
+            form.submit();
         },
         
         startAutoSync: function() {
@@ -158,12 +188,22 @@
                 return;
             }
             
+            // Sbíráme pouze důležitá data (ne funkce)
             var allData = {};
+            var dominated = ['sparePartsState_v13', 'deviceDetail:nameMap', 'app:username', 'app:role'];
+            
             for (var i = 0; i < localStorage.length; i++) {
                 var key = localStorage.key(i);
-                if (key && key.indexOf('darkMode') !== 0 && key.indexOf('lang') !== 0) {
+                if (key && 
+                    key.indexOf('darkMode') !== 0 && 
+                    key.indexOf('lang') !== 0 &&
+                    key.indexOf('setItem') === -1) {
                     try {
-                        allData[key] = JSON.parse(localStorage.getItem(key));
+                        var val = localStorage.getItem(key);
+                        // Přeskočíme pokud je to funkce
+                        if (val && val.indexOf('function') !== 0) {
+                            allData[key] = JSON.parse(val);
+                        }
                     } catch(e) {
                         allData[key] = localStorage.getItem(key);
                     }
@@ -180,27 +220,31 @@
         }
     };
     
-    // Override localStorage
+    // Override localStorage - ale ne pro funkce
     (function() {
         var originalSetItem = localStorage.setItem.bind(localStorage);
         var originalGetItem = localStorage.getItem.bind(localStorage);
         
         localStorage.setItem = function(key, value) {
             originalSetItem(key, value);
-            if (CloudSync.enabled && key.indexOf('darkMode') !== 0 && key.indexOf('lang') !== 0) {
+            // Synchronizujeme pouze pro důležité klíče
+            if (CloudSync.enabled && 
+                key.indexOf('darkMode') !== 0 && 
+                key.indexOf('lang') !== 0 &&
+                (key === 'sparePartsState_v13' || key.indexOf('deviceDetail') === 0)) {
                 CloudSync.markChange(key);
                 clearTimeout(window._cloudSaveTimeout);
                 window._cloudSaveTimeout = setTimeout(function() {
                     CloudSync.syncAll();
-                }, 2000);
+                }, 3000);
             }
         };
         
-        window._originalGetItem = originalGetItem;
         window._originalSetItem = originalSetItem;
+        window._originalGetItem = originalGetItem;
     })();
     
-    // Init při načtení
+    // Init
     document.addEventListener('DOMContentLoaded', function() {
         var cloudEnabled = CloudSync.init();
         
@@ -235,9 +279,7 @@
                 syncBtn.className = 'theme-switcher';
                 syncBtn.title = 'Synchronizovat s cloudem';
                 syncBtn.innerHTML = '☁️';
-                syncBtn.onclick = function() {
-                    CloudSync.syncAll();
-                };
+                syncBtn.onclick = function() { CloudSync.syncAll(); };
                 headerRight.insertBefore(syncBtn, headerRight.firstChild);
             }
         }, 500);
