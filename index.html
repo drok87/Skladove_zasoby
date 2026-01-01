@@ -1733,6 +1733,7 @@ init: function() {
 </style>
 <div class="smart-chips" id="smart-chips">
   <button class="smart-chip" data-mode="all" onclick="setSmartFilter('all')">Vše</button>
+  <button class="smart-chip" data-mode="unstocked" onclick="setSmartFilter('unstocked')">Nenaskladněné</button>
   <button class="smart-chip" data-mode="missing" onclick="setSmartFilter('missing')">Chybí údaje</button>
   <button class="smart-chip" data-mode="low" onclick="setSmartFilter('low')">Nízký stav</button>
   <button class="smart-chip" data-mode="recent" onclick="setSmartFilter('recent')">Naposledy importované</button>
@@ -5764,6 +5765,14 @@ function removeProtocol(machineId, idx){
       if (machineFilter !== 'all' && part.machineId !== machineFilter) return false;
 
       // Smart filters
+      // "Vše" (all) = pouze díly které mají přiřazený sklad (jsou naskladněné)
+      if (mode === 'all') {
+        if (!part.warehouse) return false;
+      }
+      // "Nenaskladněné" (unstocked) = díly bez přiřazeného skladu
+      if (mode === 'unstocked') {
+        if (part.warehouse) return false;
+      }
       if (mode === 'missing') {
         const miss = [];
         if (!part.category) miss.push('Kategorie');
