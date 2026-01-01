@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Systém správy náhradních dílů v13</title>
+    <title>Systém správy náhradních dílů</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
@@ -1552,7 +1552,7 @@ init: function() {
     <div id="app-container" class="container hidden">
         <div class="header">
             <div>
-                <h1 data-i18n="app_title">Systém správy náhradních dílů v13</h1>
+                <h1 data-i18n="app_title">Systém správy náhradních dílů</h1>
                 <p data-i18n="app_description">Kompletní řešení pro evidenci, hlídání a správu skladových zásob</p>
             </div>
             <div class="header-right">
@@ -2139,8 +2139,6 @@ init: function() {
 })();
 </script>
 
-
-</div>
                 </div>
                  <div class="settings-card">
                     <h3>Obecné nastavení</h3>
@@ -2357,7 +2355,7 @@ init: function() {
       <section id="sec-history" class="section">
               <div class="section-header">
                 <div class="section-title">Historie</div>
-                <div class="section-actions"><button id="inv-map-toggle" class="btn btn-ghost" title="Nastavit mapování skladu pro odečet">⚙️ Sklad – mapování</button><div class="order-profile-actions"><button id="order-save-default" class="btn btn-ghost" title="Nastavit aktuální pořadí sekcí jako výchozí pro toto zařízení">Uložit výchozí pořadí</button><button id="order-save-user" class="btn btn-ghost" title="Uložit pořadí jako můj profil pro toto zařízení">Uložit můj profil</button><button id="order-reset-default" class="btn btn-ghost" title="Obnovit výchozí pořadí">Obnovit výchozí</button></div>
+                <div class="section-actions"><button id="inv-map-toggle-hist" class="btn btn-ghost inv-map-toggle" title="Nastavit mapování skladu pro odečet">⚙️ Sklad – mapování</button><div class="order-profile-actions"><button id="order-save-default-hist" class="btn btn-ghost order-save-default" title="Nastavit aktuální pořadí sekcí jako výchozí pro toto zařízení">Uložit výchozí pořadí</button><button id="order-save-user-hist" class="btn btn-ghost order-save-user" title="Uložit pořadí jako můj profil pro toto zařízení">Uložit můj profil</button><button id="order-reset-default-hist" class="btn btn-ghost order-reset-default" title="Obnovit výchozí pořadí">Obnovit výchozí</button></div>
                   <button class="btn-icon drag-handle" title="Přesunout (táhni)">↕</button>
                   <button class="btn-icon" onclick="toggleSectionCollapse('sec-history')" title="Sbalit/rozbalit">▾</button>
                 </div>
@@ -2485,7 +2483,7 @@ const AUTH_DISABLED = false; // přihlášení je povoleno pro ostrý provoz
                 login_password_label: 'Heslo',
                 login_password_placeholder: '••••••••',
                 login_button: 'Přihlásit se',
-                app_title: 'Systém správy náhradních dílů v13',
+                app_title: 'Systém správy náhradních dílů',
                 app_description: 'Kompletní řešení pro evidenci, hlídání a správu skladových zásob',
                 notifications_header: 'Oznámení',
                 change_password: 'Změnit heslo',
@@ -2566,7 +2564,7 @@ const AUTH_DISABLED = false; // přihlášení je povoleno pro ostrý provoz
                 login_password_label: 'Password',
                 login_password_placeholder: '••••••••',
                 login_button: 'Log in',
-                app_title: 'Spare Parts Management System v13',
+                app_title: 'Spare Parts Management System',
                 app_description: 'Complete solution for tracking, monitoring and managing stock inventory',
                 notifications_header: 'Notifications',
                 change_password: 'Change password',
@@ -2757,7 +2755,7 @@ if (typeof AUTH_DISABLED !== 'undefined' && AUTH_DISABLED) {
                     handleLogin();
                 }
             });
-            console.log("Aplikace v13 inicializována s přihlašovací obrazovkou!");
+            console.log("Aplikace inicializována s přihlašovací obrazovkou!");
         });
         
         function initializeApp() {
@@ -5399,7 +5397,6 @@ function showMachineDetail(machineId){
                 </div>
               </div>
               <div class="section-body">
-      <div id="notify-banner" class="notif-banner hidden"><div class="txt">Máte události <b>dnes</b> nebo <b>po termínu</b>. Zapněte notifikace ať na ně nezapomenete.</div><div class="actions"><button id="notify-cta" class="btn btn-small">Povolit notifikace</button> <button id="notify-dismiss" class="btn btn-small">Skrýt</button></div></div>
                 <div class="table-container">
                   <table class="table">
                     <thead><tr><th>Díl</th><th>SKU</th><th>Umístění</th><th>Stav</th><th>Cena/ks</th></tr></thead>
@@ -5419,7 +5416,6 @@ function showMachineDetail(machineId){
                 </div>
               </div>
               <div class="section-body">
-      <div id="notify-banner" class="notif-banner hidden"><div class="txt">Máte události <b>dnes</b> nebo <b>po termínu</b>. Zapněte notifikace ať na ně nezapomenete.</div><div class="actions"><button id="notify-cta" class="btn btn-small">Povolit notifikace</button> <button id="notify-dismiss" class="btn btn-small">Skrýt</button></div></div>
                 <div class="kv" style="margin-bottom:8px;">
                   <div>Příští</div><div><span class="badge badge-large ${_st.cls}">${_mm.revision.next || '—'}</span></div>
                   <div>Poslední</div><div>${_mm.revision.last || '—'}</div>
@@ -5466,7 +5462,6 @@ function showMachineDetail(machineId){
                 </div>
               </div>
               <div class="section-body">
-      <div id="notify-banner" class="notif-banner hidden"><div class="txt">Máte události <b>dnes</b> nebo <b>po termínu</b>. Zapněte notifikace ať na ně nezapomenete.</div><div class="actions"><button id="notify-cta" class="btn btn-small">Povolit notifikace</button> <button id="notify-dismiss" class="btn btn-small">Skrýt</button></div></div>
                 <div class="chips" id="maint-chips">
                   <button class="chip" data-mode="all">Vše</button>
                   <button class="chip" data-mode="active">Aktivní</button>
@@ -5507,7 +5502,6 @@ function showMachineDetail(machineId){
                 </div>
               </div>
               <div class="section-body">
-      <div id="notify-banner" class="notif-banner hidden"><div class="txt">Máte události <b>dnes</b> nebo <b>po termínu</b>. Zapněte notifikace ať na ně nezapomenete.</div><div class="actions"><button id="notify-cta" class="btn btn-small">Povolit notifikace</button> <button id="notify-dismiss" class="btn btn-small">Skrýt</button></div></div>
                 <div id="prot-list">
                   ${(_mm.protocols||[]).map((f,i)=>`
                     <div class="doc-info" style="margin-bottom:6px; display:flex; justify-content:space-between; gap:8px; align-items:center;">
