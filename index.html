@@ -14,7 +14,10 @@
     <script>
     var GOOGLE_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzD_tspz1BnrI868ZQ7oKX8hO3CZNmoe71pwy9famb2DVuLeSEmFuh7lCpeWItYRgEmaA/exec';
     
-    var CloudSync = {
+    
+    // SAFE BOOT: ?safe=1 nebo lokální flag
+    var SAFE_BOOT = /[?&]safe=1/.test(location.search) || localStorage.getItem('SAFE_BOOT') === '1';
+var CloudSync = {
         enabled: false,
         lastSync: null,
         syncInProgress: false,
@@ -22,14 +25,25 @@
         autoSyncInterval: 30000,
         dirty: false,
         
-        init: function() {
+                bootstrapped: false,
+        safeBoot: false,
+init: function() {
             if (GOOGLE_SCRIPT_URL === 'VLOZTE_SVOU_URL_ZDE') {
                 console.warn('Cloud sync není nakonfigurován.');
                 return false;
             }
             this.enabled = true;
-            this.startAutoSync();
-            console.log('☁️ Cloud sync inicializován');
+            this.safeBoot = !!SAFE_BOOT;
+            this.bootstrapped = false; // autosync povolíme až po načtení dat z cloudu
+
+            if (this.safeBoot) {
+                this.showSyncStatus('SAFE BOOT: načítám pouze z cloudu (bez autosyncu)', 'syncing');
+                this.setSyncButtonState('dirty'); // oranžová = nesynchronizováno/bez autosyncu
+                console.warn('☁️ SAFE BOOT aktivní');
+                return true;
+            }
+
+            console.log('☁️ Cloud sync inicializován (čekám na data z cloudu)');
             return true;
         },
         
@@ -98,7 +112,7 @@
         // Ukládání dat přes skrytý formulář (obchází CORS)
         saveToCloud: function(data, callback) {
             var self = this;
-            if (!this.enabled || this.syncInProgress) {
+            if (!this.enabled || this.syncInProgress || this.safeBoot) {
                 if (callback) callback(false);
                 return;
             }
@@ -267,7 +281,7 @@
         localStorage.setItem = function(key, value) {
             originalSetItem(key, value);
             // Synchronizujeme pro všechny důležité klíče
-            if (CloudSync.enabled && 
+            if (CloudSync.enabled && CloudSync.bootstrapped && !CloudSync.safeBoot && 
                 key.indexOf('darkMode') !== 0 && 
                 key.indexOf('lang') !== 0 &&
                 typeof value === 'string' &&
@@ -308,11 +322,21 @@
                             loadStateFromLocalStorage();
                             if (typeof renderAll === 'function') renderAll();
                         }
+                        // Cloud je načten -> teprve teď povolíme autosync
+                        CloudSync.bootstrapped = true;
+                        if (!CloudSync.safeBoot) CloudSync.startAutoSync();
                     } else {
                         console.warn('Cloud data neobsahují uživatele, používám lokální data');
+                        CloudSync.bootstrapped = true;
+                        if (!CloudSync.safeBoot) CloudSync.startAutoSync();
                     }
                 }
             });
+                // Pokud se cloud nepodařilo načíst nebo nebyla data použita, povolíme aplikaci běžet z lokálu
+                if (!CloudSync.bootstrapped) {
+                    CloudSync.bootstrapped = true;
+                    if (!CloudSync.safeBoot) CloudSync.startAutoSync();
+                }
         }
         
         // Přidáme nouzový reset - trojklik na logo/nadpis
@@ -342,13 +366,20 @@
         var choice = prompt(
             'Vyberte akci:\\n\\n' +
             '1 = Znovu načíst data z cloudu (bezpečné)\\n' +
-            '2 = Resetovat do výchozího stavu (smaže lokální data)' +
+            '2 = Resetovat do výchozího stavu (smaže lokální data)\n' +
+            '4 = SAFE BOOT (načíst z cloudu, zakázat autosync)' +
             backupInfo + '\\n\\n' +
             'Zadejte číslo:'
         );
         
         if (choice === '1') {
             CloudSync.reloadFromCloud();
+        } else if (choice === '4') {
+            // SAFE BOOT: načti cloud, zakaž autosync a nepřepisuj cloud lokálními daty
+            localStorage.setItem('SAFE_BOOT', '1');
+            var url = new URL(location.href);
+            url.searchParams.set('safe', '1');
+            location.href = url.toString();
         } else if (choice === '2') {
             if (confirm('Opravdu chcete resetovat aplikaci?\\nToto smaže všechna lokální data!')) {
                 CloudSync.resetToDefault();
@@ -480,11 +511,25 @@
                 syncBtn.title = 'Synchronizovat s cloudem';
                 syncBtn.innerHTML = '☁️';
                 syncBtn.style.transition = 'background-color 0.3s ease';
-                syncBtn.onclick = function() { CloudSync.syncAll(); };
+                syncBtn.onclick = function() {
+                    if (CloudSync.safeBoot) {
+                        if (confirm('SAFE BOOT je aktivní.\n\nChceš ho vypnout a povolit autosync?')) {
+                            localStorage.removeItem('SAFE_BOOT');
+                            var url = new URL(location.href);
+                            url.searchParams.delete('safe');
+                            location.href = url.toString();
+                            return;
+                        } else {
+                            CloudSync.showSyncStatus('SAFE BOOT: autosync je vypnutý', 'syncing');
+                            return;
+                        }
+                    }
+                    CloudSync.syncAll();
+                };
                 headerRight.insertBefore(syncBtn, headerRight.firstChild);
                 
                 // Nastavíme výchozí zelenou (synced)
-                CloudSync.setSyncButtonState('synced');
+                CloudSync.setSyncButtonState(SAFE_BOOT ? 'dirty' : 'syncing');
             }
         }, 500);
     });
@@ -2116,7 +2161,7 @@
                     <div id="dispense-reasons-list"></div>
                     <div style="display: flex; gap: 12px; margin-top: 16px;">
                         <!-- Zkrácené názvy, aby se v úzkém sloupci nepřetékaly -->
-                        <input type="text" id="new-reason-key" placeholder="Klíč" class="form-input">
+                        <input type="text" id="new-reason-key" placeholder="Klíč" class="form-input" style="display:none" aria-hidden="true" tabindex="-1">
                         <input type="text" id="new-reason-value" placeholder="Popis" class="form-input">
                         <button class="btn btn-success" onclick="addDispenseReason()">➕</button>
                     </div>
@@ -2130,7 +2175,7 @@
                     <div id="warehouses-settings-list"></div>
                     <div class="core-data-item">
                         <!-- Allow warehouse keys to be longer; minimum length enforced in script -->
-                        <input type="text" id="new-warehouses-key" placeholder="Klíč" class="form-input" maxlength="12">
+                        <input type="text" id="new-warehouses-key" placeholder="Klíč" class="form-input" maxlength="12" style="display:none" aria-hidden="true" tabindex="-1">
                         <input type="text" id="new-warehouses-value" placeholder="Název skladu" class="form-input" oninput="autoGenerateKey('warehouses')">
                         <button class="btn btn-success" onclick="addCoreDataItem('warehouses')">➕</button>
                     </div>
@@ -2139,7 +2184,7 @@
                     <h4 style="margin-top: 16px;">Kategorie</h4>
                     <div id="categories-settings-list"></div>
                     <div class="core-data-item">
-                        <input type="text" id="new-categories-key" placeholder="Klíč" class="form-input">
+                        <input type="text" id="new-categories-key" placeholder="Klíč" class="form-input" style="display:none" aria-hidden="true" tabindex="-1">
                         <input type="text" id="new-categories-value" placeholder="Název kategorie" class="form-input" oninput="autoGenerateKey('categories')">
                         <button class="btn btn-success" onclick="addCoreDataItem('categories')">➕</button>
                     </div>
@@ -2149,7 +2194,7 @@
                     <h4 style="margin-top: 16px;">Zařízení / Stroje</h4>
                     <div id="machines-settings-list"></div>
                     <div class="core-data-item">
-                        <input type="text" id="new-machines-key" placeholder="Klíč" class="form-input">
+                        <input type="text" id="new-machines-key" placeholder="Klíč" class="form-input" style="display:none" aria-hidden="true" tabindex="-1">
                         <input type="text" id="new-machines-value" placeholder="Název zařízení" class="form-input" oninput="autoGenerateKey('machines')">
                         <button class="btn btn-success" onclick="addCoreDataItem('machines')">➕</button>
                     </div>
@@ -2157,7 +2202,7 @@
                     <h4 style="margin-top: 16px;">Priority</h4>
                     <div id="priorities-settings-list"></div>
                     <div class="core-data-item">
-                        <input type="text" id="new-priorities-key" placeholder="Klíč" class="form-input" maxlength="1">
+                        <input type="text" id="new-priorities-key" placeholder="Klíč" class="form-input" maxlength="1" style="display:none" aria-hidden="true" tabindex="-1">
                         <input type="text" id="new-priorities-value" placeholder="Název priority" class="form-input" oninput="autoGenerateKey('priorities')">
                         <button class="btn btn-success" onclick="addCoreDataItem('priorities')">➕</button>
                     </div>
@@ -4723,30 +4768,37 @@ if (typeof AUTH_DISABLED !== 'undefined' && AUTH_DISABLED) {
                 const div = document.createElement('div');
                 div.className = 'reason-item';
                 div.innerHTML = `
-                    <input type="text" class="form-input" value="${key}" disabled>
                     <input type="text" class="form-input" value="${value}" onchange="updateDispenseReason('${key}', this.value)">
                     <button class="btn btn-danger" onclick="deleteDispenseReason('${key}')">🗑️</button>
                 `;
                 container.appendChild(div);
             }
         }
+function addDispenseReason() {
+    const valueInput = document.getElementById('new-reason-value');
+    const value = (valueInput ? valueInput.value : '').trim();
+    if (!value) return showAlert('Chyba', 'Text důvodu je povinný.', 'error');
+    if (!state.dispenseReasons) state.dispenseReasons = {};
 
-        function addDispenseReason() {
-            const keyInput = document.getElementById('new-reason-key');
-            const valueInput = document.getElementById('new-reason-value');
-            const key = keyInput.value.trim();
-            const value = valueInput.value.trim();
+    const base = (typeof slugify === 'function' ? slugify(value) : value.toLowerCase().replace(/\s+/g,'').replace(/[^a-z0-9]/g,''));
+    let key = (base || 'duvod').slice(0, 16);
+    // Reserve system key 'jine' if value looks like it
+    if (value.toLowerCase().startsWith('jin')) key = 'jine';
 
-            if (!key || !value) return showAlert('Chyba', 'Klíč i text jsou povinné.', 'error');
-            if (state.dispenseReasons[key]) return showAlert('Chyba', 'Tento klíč již existuje.', 'error');
+    let i = 1;
+    while (state.dispenseReasons[key]) {
+        const suffix = String(i++);
+        key = ((base || 'duvod').slice(0, Math.max(1, 16 - suffix.length)) + suffix).slice(0, 16);
+    }
 
-            state.dispenseReasons[key] = value;
-            logAuditEvent('Správa nastavení', `Přidán nový důvod výdeje: '${value}'.`);
-            saveStateToLocalStorage();
-            renderDispenseReasonsSettings();
-            keyInput.value = '';
-            valueInput.value = '';
-        }
+    state.dispenseReasons[key] = value;
+    logAuditEvent('Správa nastavení', `Přidán nový důvod výdeje: '${value}'.`);
+    saveStateToLocalStorage();
+    renderDispenseReasonsSettings();
+
+    if (valueInput) valueInput.value = '';
+    showAlert('Úspěch', 'Důvod byl přidán.', 'success');
+}
 
         function updateDispenseReason(key, newValue) {
             if (state.dispenseReasons[key]) {
@@ -4778,7 +4830,6 @@ if (typeof AUTH_DISABLED !== 'undefined' && AUTH_DISABLED) {
                     const div = document.createElement('div');
                     div.className = 'core-data-item';
                     div.innerHTML = `
-                        <input type="text" class="form-input" value="${key}" disabled>
                         <input type="text" class="form-input" value="${value}" onchange="updateCoreDataItem('${type}', '${key}', this.value)">
                         <button class="btn btn-danger" onclick="deleteCoreDataItem('${type}', '${key}')">🗑️</button>
                     `;
@@ -4790,39 +4841,50 @@ if (typeof AUTH_DISABLED !== 'undefined' && AUTH_DISABLED) {
             renderList('machines');
             renderList('priorities');
         }
+function addCoreDataItem(type) {
+    const valueInput = document.getElementById(`new-${type}-value`);
+    const value = (valueInput ? valueInput.value : '').trim();
+    if (!value) return showAlert('Chyba', 'Název je povinný.', 'error');
+    if (!state[type]) state[type] = {};
 
-        function addCoreDataItem(type) {
-            const keyInput = document.getElementById(`new-${type}-key`);
-            const valueInput = document.getElementById(`new-${type}-value`);
-            let key = keyInput.value.trim().toLowerCase().replace(/\s+/g, '');
-            const value = valueInput.value.trim();
-            // For non‑admin roles or when key is empty, generate the key from the value using slugify.  This
-            // mirrors the behaviour of automatic key generation in the UI.  Warehouses require at least
-            // seven characters; priorities use only the first character.
-            let role = 'admin';
-            try { role = (typeof getRole === 'function') ? getRole() : 'admin'; } catch(e){}
-            if (role !== 'admin' || !key){
-              key = slugify(value);
-              if (type === 'priorities') key = key.charAt(0);
-              if (type === 'warehouses'){
-                while(key.length < 7) key += 'x';
-              }
+    // Keys are INTERNAL identifiers. We hide them from UI, but we still need them to reference items in data.
+    // For priorities we keep the classic single-letter key (a,b,c,...) derived from the first letter.
+    // For other lists we generate a slug and ensure uniqueness.
+    let key = '';
+    if (type === 'priorities') {
+        key = value.trim().charAt(0).toLowerCase();
+        if (!key) return showAlert('Chyba', 'Název priority je povinný.', 'error');
+        // Ensure unique letter key
+        if (state[type][key]) {
+            // try next letters a..z
+            const alphabet = 'abcdefghijklmnopqrstuvwxyz';
+            let found = null;
+            for (const ch of alphabet) {
+                if (!state[type][ch]) { found = ch; break; }
             }
-            if (!key || !value) return showAlert('Chyba', 'Klíč i hodnota jsou povinné.', 'error');
-            if (state[type][key]) return showAlert('Chyba', 'Tento klíč již existuje.', 'error');
-
-            state[type][key] = value;
-            logAuditEvent('Správa kmenových dat', `Přidána nová položka do '${type}': ${value}.`);
-            saveStateToLocalStorage();
-            renderCoreDataSettings();
-            renderFilters();
-             if (type === 'warehouses') {
-                renderDashboardSettings();
-            }
-            keyInput.value = '';
-            valueInput.value = '';
-            showAlert('Úspěch', 'Položka byla úspěšně přidána.', 'success');
+            if (!found) return showAlert('Chyba', 'Došly volné klíče pro priority (a-z).', 'error');
+            key = found;
         }
+    } else {
+        const base = (typeof slugify === 'function' ? slugify(value) : value.toLowerCase().replace(/\s+/g,'').replace(/[^a-z0-9]/g,''));
+        key = (base || 'item').slice(0, 12);
+        let i = 1;
+        while (state[type][key]) {
+            const suffix = String(i++);
+            key = ((base || 'item').slice(0, Math.max(1, 12 - suffix.length)) + suffix).slice(0, 12);
+        }
+    }
+
+    state[type][key] = value;
+    logAuditEvent('Správa kmenových dat', `Přidána nová položka do '${type}': ${value}.`);
+    saveStateToLocalStorage();
+    renderCoreDataSettings();
+    renderFilters();
+    if (type === 'warehouses') renderDashboardSettings();
+
+    if (valueInput) valueInput.value = '';
+    showAlert('Úspěch', 'Položka byla úspěšně přidána.', 'success');
+}
 
         function updateCoreDataItem(type, key, newValue) {
             if (state[type][key]) {
@@ -9755,8 +9817,9 @@ function exportServicePDF(modal){
       // Apply automatic klíč generation and disable editing for non‑admin roles.  When run, it will
       // locate the new key/value inputs for warehouses, categories, machines and priorities.  If the
       // current role (via getRole()) is not 'admin', the key field is disabled and automatically
-      // populated based on the value field.  For priorities the key is limited to one character; for
-      // warehouses a minimum length of seven characters is enforced by padding with 'x'.
+      // populated based on the value field.  For priorities the key is limited to one character.
+      // NOTE: Pro sklady nechceme žádné doplňování "x" – klíč má být jen čistý slug z názvu (max 5 znaků
+      // jako jinde v aplikaci), aby nevznikaly hodnoty typu "brnoxx".
       function wireCoreDataAutokey(){
         const types = ['warehouses','categories','machines','priorities'];
         types.forEach(type => {
@@ -9774,7 +9837,7 @@ function exportServicePDF(modal){
               let slug = slugify(valueInput.value);
               if (type === 'priorities') slug = slug.charAt(0);
               if (type === 'warehouses'){
-                while (slug.length < 7) slug += 'x';
+                slug = (slug || 'novy').slice(0,5);
               }
               keyInput.value = slug;
             }
