@@ -22,8 +22,10 @@ var CloudSync = {
         lastSync: null,
         syncInProgress: false,
         pendingChanges: [],
-        autoSyncInterval: 30000,
+        autoSyncInterval: 300000, // 5 minut místo 30 sekund - šetří limity a vyhne se firewallu
         dirty: false,
+        offlineMode: false, // nový flag pro offline režim
+        failCount: 0, // počítadlo selhání
         
                 bootstrapped: false,
         safeBoot: false,
@@ -34,6 +36,8 @@ init: function() {
             }
             this.enabled = true;
             this.safeBoot = !!SAFE_BOOT;
+            this.offlineMode = false;
+            this.failCount = 0;
             this.bootstrapped = false; // autosync povolíme až po načtení dat z cloudu
 
             if (this.safeBoot) {
@@ -43,7 +47,7 @@ init: function() {
                 return true;
             }
 
-            console.log('☁️ Cloud sync inicializován (čekám na data z cloudu)');
+            console.log('☁️ Cloud sync inicializován (interval: 5 minut)');
             return true;
         },
         
@@ -85,15 +89,30 @@ init: function() {
             
             this.showSyncStatus('Načítám data z cloudu...', 'syncing');
             
+            // Timeout pro případ že síť je pomalá nebo blokovaná
+            var timeoutId = setTimeout(function() {
+                console.warn('☁️ CloudSync: Timeout při načítání (10s)');
+                self.handleOffline('Timeout - síť nedostupná');
+                if (callback) callback(null);
+            }, 10000);
+            
             fetch(GOOGLE_SCRIPT_URL + '?action=getData', {
                 method: 'GET',
                 redirect: 'follow'
             })
-            .then(function(response) { return response.json(); })
+            .then(function(response) { 
+                clearTimeout(timeoutId);
+                if (!response.ok) {
+                    throw new Error('HTTP ' + response.status);
+                }
+                return response.json(); 
+            })
             .then(function(result) {
                 if (result.success) {
                     self.lastSync = new Date();
                     self.dirty = false;
+                    self.offlineMode = false;
+                    self.failCount = 0;
                     self.showSyncStatus('Data načtena z cloudu', 'success');
                     self.setSyncButtonState('synced');
                     if (callback) callback(result.data);
@@ -102,34 +121,61 @@ init: function() {
                 }
             })
             .catch(function(error) {
-                console.error('Cloud load error:', error);
-                self.showSyncStatus('Chyba při načítání', 'error');
-                self.setSyncButtonState('error');
+                clearTimeout(timeoutId);
+                console.error('☁️ Cloud load error:', error);
+                self.handleOffline(error.message);
                 if (callback) callback(null);
             });
+        },
+        
+        // Přepnutí do offline režimu
+        handleOffline: function(reason) {
+            this.failCount++;
+            console.log('☁️ CloudSync: Selhání #' + this.failCount + ' - ' + reason);
+            
+            if (this.failCount >= 2) {
+                this.offlineMode = true;
+                this.showSyncStatus('Offline režim (síť nedostupná)', 'error');
+                this.setSyncButtonState('offline');
+                console.warn('☁️ CloudSync: Přepnuto do OFFLINE režimu');
+            } else {
+                this.showSyncStatus('Cloud nedostupný - zkusím znovu', 'error');
+                this.setSyncButtonState('error');
+            }
         },
         
         // Ukládání dat přes skrytý formulář (obchází CORS)
         saveToCloud: function(data, callback) {
             var self = this;
             if (!this.enabled || this.syncInProgress || this.safeBoot) {
+                console.log('☁️ CloudSync: přeskakuji uložení (enabled:', this.enabled, ', syncInProgress:', this.syncInProgress, ', safeBoot:', this.safeBoot, ')');
+                if (callback) callback(false);
+                return;
+            }
+            
+            // V offline režimu neukládáme, ale ani nehlásíme chybu
+            if (this.offlineMode) {
+                console.log('☁️ CloudSync: Offline režim - data uložena pouze lokálně');
+                this.showSyncStatus('Offline - uloženo lokálně', 'info');
                 if (callback) callback(false);
                 return;
             }
             
             // Validace - neuložíme prázdná nebo poškozená data
             if (!data || !data.main || !data.main.sparePartsState_v13) {
-                console.warn('Pokus o uložení prázdných dat - přeskakuji');
+                console.warn('☁️ CloudSync: Pokus o uložení prázdných dat - přeskakuji');
                 if (callback) callback(false);
                 return;
             }
             
             var state = data.main.sparePartsState_v13;
             if (!state.users || state.users.length === 0) {
-                console.warn('Data neobsahují uživatele - přeskakuji uložení');
+                console.warn('☁️ CloudSync: Data neobsahují uživatele - přeskakuji uložení');
                 if (callback) callback(false);
                 return;
             }
+            
+            console.log('☁️ CloudSync: Zahajuji ukládání, počet dílů:', (state.parts || []).length);
             
             this.syncInProgress = true;
             this.showSyncStatus('Ukládám do cloudu...', 'syncing');
@@ -144,10 +190,14 @@ init: function() {
                     window._originalSetItem(backupKey + '_time', new Date().toISOString());
                 }
             } catch(e) {
-                console.warn('Nepodařilo se uložit zálohu:', e);
+                console.warn('☁️ CloudSync: Nepodařilo se uložit zálohu:', e);
             }
             
-            // Vytvoříme skrytý iframe
+            // Zkusíme použít fetch API pro lepší error handling
+            var jsonData = JSON.stringify(data);
+            console.log('☁️ CloudSync: Velikost dat:', (jsonData.length / 1024).toFixed(1), 'KB');
+            
+            // Vytvoříme skrytý iframe jako fallback
             var iframeName = 'cloudSyncFrame_' + Date.now();
             var iframe = document.createElement('iframe');
             iframe.name = iframeName;
@@ -165,7 +215,7 @@ init: function() {
             var dataInput = document.createElement('input');
             dataInput.type = 'hidden';
             dataInput.name = 'data';
-            dataInput.value = JSON.stringify(data);
+            dataInput.value = jsonData;
             form.appendChild(dataInput);
             
             var actionInput = document.createElement('input');
@@ -204,13 +254,15 @@ init: function() {
             };
             
             // Timeout pro případ že iframe.onload nefunguje spolehlivě
+            // POZNÁMKA: Toto NEPOTRVUJE úspěšné uložení, pouze předpokládá úspěch po 3s
             setTimeout(function() {
                 if (self.syncInProgress) {
                     self.syncInProgress = false;
                     self.lastSync = new Date();
                     self.pendingChanges = [];
-                self.dirty = false;
-                    self.showSyncStatus('Uloženo do cloudu', 'success');
+                    self.dirty = false;
+                    console.log('☁️ CloudSync: Timeout - předpokládám úspěch (nelze ověřit kvůli CORS)');
+                    self.showSyncStatus('Odesláno do cloudu (neověřeno)', 'success');
                     self.setSyncButtonState('synced');
                     cleanup();
                     if (callback) callback(true);
@@ -242,12 +294,33 @@ init: function() {
             var allData = {};
             var dominated = ['sparePartsState_v13', 'deviceDetail:nameMap', 'app:username', 'app:role'];
             
+            console.log('☁️ CloudSync syncAll: Začínám sbírat data z localStorage...');
+            console.log('☁️ CloudSync syncAll: Počet klíčů v localStorage:', localStorage.length);
+            
+            // Nejdříve explicitně přidáme sparePartsState_v13
+            var mainStateRaw = localStorage.getItem('sparePartsState_v13');
+            if (mainStateRaw) {
+                try {
+                    allData['sparePartsState_v13'] = JSON.parse(mainStateRaw);
+                    console.log('☁️ CloudSync syncAll: sparePartsState_v13 načten, velikost:', (mainStateRaw.length / 1024).toFixed(1), 'KB');
+                    console.log('☁️ CloudSync syncAll: Počet dílů:', (allData['sparePartsState_v13'].parts || []).length);
+                    console.log('☁️ CloudSync syncAll: Počet uživatelů:', (allData['sparePartsState_v13'].users || []).length);
+                } catch(e) {
+                    console.error('☁️ CloudSync syncAll: CHYBA při parsování sparePartsState_v13:', e);
+                    allData['sparePartsState_v13'] = mainStateRaw;
+                }
+            } else {
+                console.error('☁️ CloudSync syncAll: sparePartsState_v13 NENALEZEN v localStorage!');
+            }
+            
             for (var i = 0; i < localStorage.length; i++) {
                 var key = localStorage.key(i);
                 if (key && 
+                    key !== 'sparePartsState_v13' && // už jsme přidali výše
                     key.indexOf('darkMode') !== 0 && 
                     key.indexOf('lang') !== 0 &&
-                    key.indexOf('setItem') === -1) {
+                    key.indexOf('setItem') === -1 &&
+                    key.indexOf('_backup') === -1) { // nepřidáváme zálohy
                     try {
                         var val = localStorage.getItem(key);
                         // Přeskočíme pokud je to funkce
@@ -259,6 +332,9 @@ init: function() {
                     }
                 }
             }
+            
+            console.log('☁️ CloudSync syncAll: Celkem klíčů k uložení:', Object.keys(allData).length);
+            console.log('☁️ CloudSync syncAll: Klíče:', Object.keys(allData).join(', '));
             
             this.saveToCloud({ main: allData }, callback);
         },
@@ -361,19 +437,25 @@ init: function() {
     // Dialog pro obnovu
     CloudSync.showRecoveryDialog = function() {
         var backupTime = localStorage.getItem('sparePartsState_v13_backup_time');
-        var backupInfo = backupTime ? '\\n3 = Obnovit lokální zálohu (' + new Date(backupTime).toLocaleString('cs-CZ') + ')' : '';
+        var backupInfo = backupTime ? '\n3 = Obnovit lokální zálohu (' + new Date(backupTime).toLocaleString('cs-CZ') + ')' : '';
         
         var choice = prompt(
-            'Vyberte akci:\\n\\n' +
-            '1 = Znovu načíst data z cloudu (bezpečné)\\n' +
+            'Vyberte akci:\n\n' +
+            '1 = Znovu načíst data z cloudu (bezpečné)\n' +
             '2 = Resetovat do výchozího stavu (smaže lokální data)\n' +
-            '4 = SAFE BOOT (načíst z cloudu, zakázat autosync)' +
-            backupInfo + '\\n\\n' +
+            '4 = SAFE BOOT (načíst z cloudu, zakázat autosync)\n' +
+            '5 = TEST SPOJENÍ (otestuje Google Sheets)\n' +
+            '6 = MANUÁLNÍ IMPORT (vložit JSON data)' +
+            backupInfo + '\n\n' +
             'Zadejte číslo:'
         );
         
         if (choice === '1') {
             CloudSync.reloadFromCloud();
+        } else if (choice === '5') {
+            CloudSync.testConnection();
+        } else if (choice === '6') {
+            CloudSync.manualImport();
         } else if (choice === '4') {
             // SAFE BOOT: načti cloud, zakaž autosync a nepřepisuj cloud lokálními daty
             localStorage.setItem('SAFE_BOOT', '1');
@@ -381,11 +463,87 @@ init: function() {
             url.searchParams.set('safe', '1');
             location.href = url.toString();
         } else if (choice === '2') {
-            if (confirm('Opravdu chcete resetovat aplikaci?\\nToto smaže všechna lokální data!')) {
+            if (confirm('Opravdu chcete resetovat aplikaci?\nToto smaže všechna lokální data!')) {
                 CloudSync.resetToDefault();
             }
         } else if (choice === '3' && backupTime) {
             CloudSync.restoreBackup();
+        }
+    };
+    
+    // Test spojení s Google Sheets
+    CloudSync.testConnection = function() {
+        var self = this;
+        console.log('☁️ CloudSync: Testuji spojení s Google Sheets...');
+        this.showSyncStatus('Testuji spojení...', 'syncing');
+        
+        // Test 1: Načtení dat (GET)
+        fetch(GOOGLE_SCRIPT_URL + '?action=getData', {
+            method: 'GET',
+            redirect: 'follow'
+        })
+        .then(function(response) {
+            console.log('☁️ CloudSync TEST: GET response status:', response.status);
+            return response.text();
+        })
+        .then(function(text) {
+            console.log('☁️ CloudSync TEST: GET response (prvních 500 znaků):', text.substring(0, 500));
+            try {
+                var json = JSON.parse(text);
+                if (json.success) {
+                    var partsCount = (json.data && json.data.main && json.data.main.sparePartsState_v13 && json.data.main.sparePartsState_v13.parts) 
+                        ? json.data.main.sparePartsState_v13.parts.length : '?';
+                    alert('✅ NAČÍTÁNÍ FUNGUJE!\n\nData z cloudu:\n- Počet dílů: ' + partsCount + '\n\nPokud se změny neukládají, problém je pravděpodobně v Google Apps Script nebo v oprávněních.');
+                    self.showSyncStatus('Test OK - načítání funguje', 'success');
+                } else {
+                    alert('⚠️ Server odpověděl, ale vrátil chybu:\n' + (json.error || 'Neznámá chyba'));
+                    self.showSyncStatus('Test: chyba serveru', 'error');
+                }
+            } catch(e) {
+                alert('⚠️ Server odpověděl, ale odpověď není platný JSON:\n\n' + text.substring(0, 200));
+                self.showSyncStatus('Test: neplatná odpověď', 'error');
+            }
+        })
+        .catch(function(error) {
+            console.error('☁️ CloudSync TEST: Chyba:', error);
+            alert('❌ CHYBA SPOJENÍ!\n\n' + error.message + '\n\nMožné příčiny:\n- Google Apps Script URL je neplatná\n- Skript byl smazán nebo přejmenován\n- Problém se sítí\n\nZkuste použít volbu 6 pro manuální import.');
+            self.showSyncStatus('Test: chyba spojení', 'error');
+        });
+    };
+    
+    // Manuální import dat z JSON
+    CloudSync.manualImport = function() {
+        var jsonStr = prompt('Vložte JSON data z cloudu:\n\n(Otevřete URL v prohlížeči, zkopírujte celý text a vložte sem)');
+        if (!jsonStr) return;
+        
+        try {
+            var json = JSON.parse(jsonStr);
+            var data = json.data || json;
+            
+            if (data.main && data.main.sparePartsState_v13) {
+                var state = data.main.sparePartsState_v13;
+                if (state.users && state.users.length > 0 && state.parts) {
+                    // Uložíme do localStorage
+                    localStorage.setItem('sparePartsState_v13', JSON.stringify(state));
+                    
+                    // Uložíme i další klíče
+                    Object.keys(data.main).forEach(function(key) {
+                        if (key !== 'sparePartsState_v13' && key.indexOf('_backup') === -1) {
+                            var val = data.main[key];
+                            localStorage.setItem(key, typeof val === 'object' ? JSON.stringify(val) : String(val));
+                        }
+                    });
+                    
+                    alert('✅ Data úspěšně importována!\n\nPočet dílů: ' + state.parts.length + '\nPočet uživatelů: ' + state.users.length + '\n\nStránka se nyní obnoví.');
+                    location.reload();
+                } else {
+                    alert('❌ Data neobsahují platnou strukturu (chybí users nebo parts).');
+                }
+            } else {
+                alert('❌ Neplatná struktura dat. Očekávám {"success":true,"data":{"main":{"sparePartsState_v13":...}}}');
+            }
+        } catch(e) {
+            alert('❌ Chyba při parsování JSON:\n\n' + e.message);
         }
     };
     
@@ -542,15 +700,29 @@ init: function() {
         if (state === 'syncing') {
             btn.style.backgroundColor = '#ff9500'; // Oranžová
             btn.style.borderColor = '#ff9500';
+            btn.title = 'Synchronizuji...';
         } else if (state === 'dirty') {
             btn.style.backgroundColor = '#ffcc00'; // Žlutá = neuložené změny
             btn.style.borderColor = '#ffcc00';
+            btn.title = 'Neuložené změny - klikni pro sync';
         } else if (state === 'synced') {
             btn.style.backgroundColor = '#34c759'; // Zelená
             btn.style.borderColor = '#34c759';
+            btn.title = 'Synchronizováno s cloudem';
         } else if (state === 'error') {
             btn.style.backgroundColor = '#ff3b30'; // Červená
             btn.style.borderColor = '#ff3b30';
+            btn.title = 'Chyba synchronizace - klikni pro retry';
+        } else if (state === 'offline') {
+            btn.style.backgroundColor = '#8e8e93'; // Šedá = offline
+            btn.style.borderColor = '#8e8e93';
+            btn.title = 'Offline režim - síť nedostupná';
+            btn.innerHTML = '📴';
+        }
+        
+        // Vrátit ikonu na cloud pokud není offline
+        if (state !== 'offline') {
+            btn.innerHTML = '☁️';
         }
     };
     </script>
